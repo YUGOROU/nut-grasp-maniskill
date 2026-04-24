@@ -267,6 +267,13 @@ def train(args: Args):
     # ── Model ──
     agent = ActorCritic(img_ch, state_dim, args.cnn_out_dim,
                         args.hidden_dim, action_dim).to(device)
+    # Trigger lazy cnn_proj init BEFORE creating optimizer so it's included
+    with torch.no_grad():
+        _d_rgb = torch.zeros(1, H, W, n_cams_rgb * 3, dtype=torch.uint8, device=device)
+        _d_dep = torch.zeros(1, H, W, n_cams_d, device=device)
+        _d_st  = torch.zeros(1, state_dim, device=device)
+        agent.get_action_and_value(_d_rgb, _d_dep, _d_st)
+    print(f"cnn_proj initialized: conv_flat_dim={agent._conv_flat_dim}")
     optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
 
     # ── Rollout buffers (on device) ──
@@ -352,6 +359,7 @@ def train(args: Args):
         pg_losses, v_losses, ent_losses, approx_kls = [], [], [], []
         for epoch in range(args.update_epochs):
             np.random.shuffle(inds)
+            early_stop = False
             for start in range(0, args.batch_size, args.minibatch_size):
                 mb = inds[start: start + args.minibatch_size]
                 _, new_logp, entropy, new_val = agent.get_action_and_value(
@@ -362,6 +370,11 @@ def train(args: Args):
                 with torch.no_grad():
                     approx_kl = ((ratio - 1) - log_ratio).mean()
                     approx_kls.append(approx_kl.item())
+
+                # Per-minibatch KL check — stop BEFORE applying this update
+                if args.target_kl is not None and approx_kl > args.target_kl:
+                    early_stop = True
+                    break
 
                 mb_adv = b_adv[mb]
                 pg1    = -mb_adv * ratio
@@ -389,7 +402,7 @@ def train(args: Args):
                 nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
 
-            if args.target_kl and np.mean(approx_kls) > args.target_kl:
+            if early_stop:
                 break
 
         # ── Logging ──
@@ -398,15 +411,20 @@ def train(args: Args):
             ep_rew   = rb_reward.sum(0).mean().item()
             success  = info.get("success", torch.zeros(1))
             suc_rate = float(success.float().mean()) if hasattr(success, "float") else 0.0
+            _pg  = np.mean(pg_losses)  if pg_losses  else float("nan")
+            _v   = np.mean(v_losses)   if v_losses   else float("nan")
+            _ent = np.mean(ent_losses) if ent_losses else float("nan")
+            _kl  = np.mean(approx_kls) if approx_kls else float("nan")
             print(
                 f"update={update}/{num_updates} "
                 f"steps={global_step:,} "
                 f"sps={sps:,} "
                 f"ep_rew={ep_rew:.3f} "
                 f"success={suc_rate:.2%} "
-                f"pg={np.mean(pg_losses):.4f} "
-                f"v={np.mean(v_losses):.4f} "
-                f"kl={np.mean(approx_kls):.4f} "
+                f"pg={_pg:.4f} "
+                f"v={_v:.4f} "
+                f"ent={_ent:.4f} "
+                f"kl={_kl:.4f} "
                 f"lr={optimizer.param_groups[0]['lr']:.2e}"
             )
             if args.use_wandb:
