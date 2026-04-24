@@ -165,16 +165,23 @@ class NutGraspEnv(BaseEnv):
         reach_dist  = torch.linalg.norm(tcp_pos - nut_pos, dim=-1)
         reach_rew   = 1 - torch.tanh(5.0 * reach_dist)
 
-        # Stage 2: lift nut (z above tray)
+        # Stage 2: grasp — reward closing gripper while near nut
+        # gripper joint: 0=closed, 0.04m=open (normalize_action=True maps [-1,1]->[0,0.04])
+        gripper_q  = self.agent.robot.get_qpos()[:, -1].clamp(0.0, 0.04)
+        gripper_open = gripper_q / 0.04          # [0=closed, 1=open]
+        grasp_rew  = (1.0 - gripper_open) * reach_rew
+
+        # Stage 3: lift nut (z above tray rim)
         lift_height = (nut_pos[:, 2] - (self.TRAY_OFFSET[2] + self.TRAY_HALF[2])).clamp(0)
         lift_rew    = torch.tanh(10.0 * lift_height)
 
-        # Stage 3: place nut in target bowl
+        # Stage 4: place nut in target bowl
         place_dist  = torch.linalg.norm(nut_pos - bowl_pos, dim=-1)
         place_rew   = 1 - torch.tanh(5.0 * place_dist)
 
-        reward = reach_rew + lift_rew * 2.0 + place_rew * 3.0
+        # max = 1 + 2 + 2 + 3 = 8
+        reward = reach_rew + grasp_rew * 2.0 + lift_rew * 2.0 + place_rew * 3.0
         return reward
 
     def compute_normalized_dense_reward(self, obs: Any, action: torch.Tensor, info: dict):
-        return self.compute_dense_reward(obs, action, info) / 6.0
+        return self.compute_dense_reward(obs, action, info) / 8.0
