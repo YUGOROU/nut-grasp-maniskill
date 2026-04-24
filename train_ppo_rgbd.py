@@ -257,7 +257,8 @@ def train(args: Args):
     n_cams_d   = depth_sample.shape[3]
     img_ch     = n_cams_rgb * 3 + n_cams_d   # total channels after concat
     state_dim  = state_sample.shape[1]
-    action_dim = env.action_space.shape[0]
+    # single_action_space gives (action_dim,), action_space gives (num_envs, action_dim)
+    action_dim = env.unwrapped.single_action_space.shape[0]
 
     print(f"Obs: rgb={rgb_sample.shape} depth={depth_sample.shape} "
           f"state={state_sample.shape}")
