@@ -197,7 +197,8 @@ class ActorCritic(nn.Module):
         return torch.cat([img_feat, state_feat], dim=-1)     # (B, feat_dim)
 
     def get_value(self, rgb, depth, state):
-        return self.critic(self._encode(rgb, depth, state))
+        # detach: critic doesn't update the shared encoder
+        return self.critic(self._encode(rgb, depth, state).detach())
 
     def get_action_and_value(self, rgb, depth, state, action=None):
         feat = self._encode(rgb, depth, state)
@@ -208,7 +209,8 @@ class ActorCritic(nn.Module):
             action = dist.sample()
         log_prob = dist.log_prob(action).sum(-1)
         entropy  = dist.entropy().sum(-1)
-        value    = self.critic(feat)
+        # detach: value loss gradient doesn't corrupt the actor's encoder
+        value    = self.critic(feat.detach())
         return action, log_prob, entropy, value
 
 
