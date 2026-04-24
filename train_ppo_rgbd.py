@@ -51,19 +51,19 @@ class Args:
 
     # PPO
     total_timesteps:   int   = 50_000_000
-    learning_rate:     float = 3e-4
-    num_steps:         int   = 50              # steps per rollout per env
-    gamma:             float = 0.8             # short horizon for manipulation
-    gae_lambda:        float = 0.9
+    learning_rate:     float = 1e-4             # lower: stabilizes early updates
+    num_steps:         int   = 100             # longer horizon captures delayed reward
+    gamma:             float = 0.85            # slightly higher for manipulation
+    gae_lambda:        float = 0.95            # standard PPO
     num_minibatches:   int   = 32
     update_epochs:     int   = 4
-    clip_coef:         float = 0.2
-    ent_coef:          float = 0.0
+    clip_coef:         float = 0.1             # tighter: prevents large policy jumps
+    ent_coef:          float = 0.01            # KEY: prevents entropy collapse
     vf_coef:           float = 0.5
     max_grad_norm:     float = 0.5
     norm_adv:          bool  = True
     clip_vloss:        bool  = True
-    target_kl:         Optional[float] = 0.1
+    target_kl:         Optional[float] = 0.05  # tighter: stops update if KL too large
 
     # Network
     img_channels:      int   = 4              # RGB(3) + D(1)
