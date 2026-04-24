@@ -1,0 +1,28 @@
+env_id: NutGrasp-v1
+robot_uids: so101
+nut_type: almond          # almond | ginko
+
+obs_mode: rgbd
+control_mode: pd_joint_pos
+reward_mode: normalized_dense
+render_mode: cameras
+
+# Simulation
+sim_backend: physx        # physx (CPU) | physx-gpu (GPU parallel)
+num_envs: 1
+
+# Camera config (matches real-world SO-101 setup)
+cameras:
+  overhead:
+    width: 640
+    height: 480
+    fov: 60
+    near: 0.01
+    far: 10.0
+    pose:               # above and slightly forward of table center
+      p: [0.0, 0.0, 0.50]
+      q: [0.707, -0.707, 0.0, 0.0]   # looking down
+
+# Training hints
+max_episode_steps: 200
+reconfiguration_freq: 1   # re-randomize every episode
