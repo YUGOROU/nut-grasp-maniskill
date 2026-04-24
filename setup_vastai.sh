@@ -13,10 +13,11 @@ PYTHON="python3.10"
 
 echo "=== [1/5] System packages ==="
 apt-get update -qq && apt-get install -y -qq \
-    git curl libvulkan1 vulkan-tools \
+    git git-lfs curl libvulkan1 vulkan-tools \
     libgl1-mesa-glx libegl1-mesa libgles2-mesa \
     python3.10 python3.10-venv \
     > /dev/null
+git lfs install --system > /dev/null
 
 echo "=== [2/5] uv ==="
 # Install uv (fast Python package manager)
