@@ -174,10 +174,12 @@ class ActorCritic(nn.Module):
 
     def _encode(self, rgb: torch.Tensor, depth: torch.Tensor,
                 state: torch.Tensor):
-        # rgb: (B, H, W, 3) uint8 | depth: (B, H, W, 1) float
+        # rgb: (B, H, W, 3) uint8 | depth: (B, H, W, 1) float (metres, raw)
+        # Clamp and normalise depth to [0, 1] — raw metres cause O(100) features
+        depth_norm = torch.clamp(depth.float(), 0.0, 10.0) / 10.0
         img = torch.cat([
             rgb.float() / 255.0,
-            depth.float(),
+            depth_norm,
         ], dim=-1)  # (B, H, W, 4)
         img = img.permute(0, 3, 1, 2)  # (B, 4, H, W)
 
@@ -355,6 +357,12 @@ def train(args: Args):
         b_ret   = returns.reshape(-1)
         if args.norm_adv:
             b_adv = (b_adv - b_adv.mean()) / (b_adv.std() + 1e-8)
+
+        # One-time sanity check on return / depth scale
+        if update == 1:
+            print(f"DEBUG ret: min={b_ret.min():.3f} max={b_ret.max():.3f} "
+                  f"mean={b_ret.mean():.3f}  "
+                  f"depth raw: min={rb_depth.min():.3f} max={rb_depth.max():.3f}")
 
         # ── PPO update ──
         inds = np.arange(args.batch_size)
