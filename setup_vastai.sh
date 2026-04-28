@@ -72,7 +72,7 @@ import torch
 obs2, rew, term, trunc, info = env.step(torch.tensor(action))
 print(f"NutGrasp-v1 RGBD OK")
 print(f"  rgb={obs['rgb'].shape} depth={obs['depth'].shape} state={obs['state'].shape}")
-print(f"  reward={rew.mean():.4f}")
+print(f"  reward={rew.mean().item():.4f}")
 env.close()
 PYEOF
 

@@ -320,6 +320,11 @@ def train(args: Args):
             )
         # Validate structural hyperparameters that affect buffer/model shapes
         saved_args = ckpt["args"]
+        if not isinstance(saved_args, dict):
+            raise ValueError(
+                f"Invalid checkpoint {args.resume!r}: expected 'args' to be a dict, "
+                f"got {type(saved_args).__name__}"
+            )
         for key in ("num_envs", "num_steps", "img_channels", "cnn_out_dim", "hidden_dim"):
             if saved_args.get(key) != getattr(args, key):
                 raise ValueError(
