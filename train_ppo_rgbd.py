@@ -298,17 +298,38 @@ def train(args: Args):
     # ── Main loop ──
     global_step      = 0
     start_update     = 1
+    step_offset      = 0   # steps before resume; used to compute per-session SPS
     start_time       = time.time()
     num_updates      = args.total_timesteps // args.batch_size
-    save_dir         = os.path.join(_HERE, "checkpoints", run_name)
+
+    # Determine save directory before makedirs so resume can redirect it
+    if args.resume:
+        save_dir = os.path.dirname(os.path.abspath(args.resume))
+        run_name = os.path.basename(save_dir)
+    else:
+        save_dir = os.path.join(_HERE, "checkpoints", run_name)
     os.makedirs(save_dir, exist_ok=True)
 
     # Resume from checkpoint (restores model, optimizer, step counter)
     if args.resume:
-        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        _REQUIRED = {"model", "optimizer", "global_step", "update", "args"}
+        ckpt = torch.load(args.resume, map_location=device, weights_only=True)
+        if not isinstance(ckpt, dict) or not _REQUIRED.issubset(ckpt):
+            raise ValueError(
+                f"Invalid checkpoint {args.resume!r}: expected keys {sorted(_REQUIRED)}"
+            )
+        # Validate structural hyperparameters that affect buffer/model shapes
+        saved_args = ckpt["args"]
+        for key in ("num_envs", "num_steps", "img_channels", "cnn_out_dim", "hidden_dim"):
+            if saved_args.get(key) != getattr(args, key):
+                raise ValueError(
+                    f"Hyperparameter mismatch '{key}': "
+                    f"checkpoint={saved_args.get(key)!r}, current={getattr(args, key)!r}"
+                )
         agent.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         global_step  = ckpt["global_step"]
+        step_offset  = global_step
         start_update = ckpt["update"] + 1
         print(f"Resumed from {args.resume}  "
               f"(update={ckpt['update']}, steps={global_step:,})")
@@ -431,7 +452,7 @@ def train(args: Args):
 
         # ── Logging ──
         if update % args.log_freq == 0:
-            sps      = int(global_step / (time.time() - start_time))
+            sps      = int((global_step - step_offset) / (time.time() - start_time))
             ep_rew   = rb_reward.sum(0).mean().item()
             success  = info.get("success", torch.zeros(1))
             suc_rate = float(success.float().mean()) if hasattr(success, "float") else 0.0
