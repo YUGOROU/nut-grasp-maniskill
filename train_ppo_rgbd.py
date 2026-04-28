@@ -302,10 +302,11 @@ def train(args: Args):
     start_time       = time.time()
     num_updates      = args.total_timesteps // args.batch_size
 
-    # Determine save directory before makedirs so resume can redirect it
+    # Determine save directory before makedirs so resume can redirect it.
+    # run_name is intentionally kept as the timestamp-based name for W&B consistency;
+    # only save_dir is redirected to the checkpoint's parent folder on resume.
     if args.resume:
         save_dir = os.path.dirname(os.path.abspath(args.resume))
-        run_name = os.path.basename(save_dir)
     else:
         save_dir = os.path.join(_HERE, "checkpoints", run_name)
     os.makedirs(save_dir, exist_ok=True)
@@ -348,6 +349,14 @@ def train(args: Args):
         global_step  = ckpt["global_step"]
         step_offset  = global_step
         start_update = ckpt["update"] + 1
+        # Fail fast if the requested total_timesteps is already exceeded by the checkpoint
+        if start_update > num_updates:
+            raise ValueError(
+                f"Cannot resume from {args.resume!r}: checkpoint progress "
+                f"(update={ckpt['update']}, steps={global_step:,}) already meets or "
+                f"exceeds the current target (total_timesteps={args.total_timesteps:,}, "
+                f"max_updates={num_updates}). Increase --total-timesteps."
+            )
         print(f"Resumed from {args.resume}  "
               f"(update={ckpt['update']}, steps={global_step:,})")
 
