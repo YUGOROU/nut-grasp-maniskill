@@ -69,7 +69,8 @@ env = FlattenRGBDObservationWrapper(env, rgb=True, depth=True, state=True, sep_d
 obs, _ = env.reset()
 action = env.action_space.sample()
 import torch
-obs2, rew, term, trunc, info = env.step(torch.tensor(action))
+action = torch.as_tensor(action, dtype=torch.float32, device=obs["state"].device)
+obs2, rew, term, trunc, info = env.step(action)
 print(f"NutGrasp-v1 RGBD OK")
 print(f"  rgb={obs['rgb'].shape} depth={obs['depth'].shape} state={obs['state'].shape}")
 print(f"  reward={rew.mean().item():.4f}")

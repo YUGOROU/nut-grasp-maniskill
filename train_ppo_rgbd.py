@@ -318,19 +318,31 @@ def train(args: Args):
             raise ValueError(
                 f"Invalid checkpoint {args.resume!r}: expected keys {sorted(_REQUIRED)}"
             )
-        # Validate structural hyperparameters that affect buffer/model shapes
+        # Validate structural hyperparameters that affect buffer/model shapes.
+        # Note: img_channels (Args field) is not used to build the model; the
+        # actual channel count img_ch is derived from the env and stored in env_dims.
         saved_args = ckpt["args"]
         if not isinstance(saved_args, dict):
             raise ValueError(
                 f"Invalid checkpoint {args.resume!r}: expected 'args' to be a dict, "
                 f"got {type(saved_args).__name__}"
             )
-        for key in ("num_envs", "num_steps", "img_channels", "cnn_out_dim", "hidden_dim"):
+        for key in ("num_envs", "num_steps", "cnn_out_dim", "hidden_dim"):
             if saved_args.get(key) != getattr(args, key):
                 raise ValueError(
                     f"Hyperparameter mismatch '{key}': "
                     f"checkpoint={saved_args.get(key)!r}, current={getattr(args, key)!r}"
                 )
+        # Validate derived env dims if present (added in newer checkpoints)
+        if "env_dims" in ckpt:
+            saved_dims = ckpt["env_dims"]
+            for key, current in (("img_ch", img_ch), ("state_dim", state_dim),
+                                  ("action_dim", action_dim)):
+                if saved_dims.get(key) != current:
+                    raise ValueError(
+                        f"Env dimension mismatch '{key}': "
+                        f"checkpoint={saved_dims.get(key)!r}, current={current!r}"
+                    )
         agent.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
         global_step  = ckpt["global_step"]
@@ -500,6 +512,8 @@ def train(args: Args):
                 "model":        agent.state_dict(),
                 "optimizer":    optimizer.state_dict(),
                 "args":         vars(args),
+                "env_dims":     {"img_ch": img_ch, "state_dim": state_dim,
+                                 "action_dim": action_dim},
             }, ckpt_path)
             print(f"  [saved] {ckpt_path}")
 
