@@ -75,8 +75,11 @@ class Args:
     wandb_project:     str   = "GYOZA-sim2real"
     wandb_entity:      str   = "YUGOROU"
     use_wandb:         bool  = False
-    save_freq:         int   = 100            # save every N updates
+    save_freq:         int   = 50             # save every N updates
     log_freq:          int   = 1
+
+    # Resume
+    resume:            str   = ""             # path to checkpoint .pt to resume from
 
     # Derived (set after init)
     batch_size:        int   = 0
@@ -294,10 +297,68 @@ def train(args: Args):
 
     # ── Main loop ──
     global_step      = 0
+    start_update     = 1
+    step_offset      = 0   # steps before resume; used to compute per-session SPS
     start_time       = time.time()
     num_updates      = args.total_timesteps // args.batch_size
-    save_dir         = os.path.join(_HERE, "checkpoints", run_name)
+
+    # Determine save directory before makedirs so resume can redirect it.
+    # run_name is intentionally kept as the timestamp-based name for W&B consistency;
+    # only save_dir is redirected to the checkpoint's parent folder on resume.
+    if args.resume:
+        save_dir = os.path.dirname(os.path.abspath(args.resume))
+    else:
+        save_dir = os.path.join(_HERE, "checkpoints", run_name)
     os.makedirs(save_dir, exist_ok=True)
+
+    # Resume from checkpoint (restores model, optimizer, step counter)
+    if args.resume:
+        _REQUIRED = {"model", "optimizer", "global_step", "update", "args"}
+        ckpt = torch.load(args.resume, map_location=device, weights_only=True)
+        if not isinstance(ckpt, dict) or not _REQUIRED.issubset(ckpt):
+            raise ValueError(
+                f"Invalid checkpoint {args.resume!r}: expected keys {sorted(_REQUIRED)}"
+            )
+        # Validate structural hyperparameters that affect buffer/model shapes.
+        # Note: img_channels (Args field) is not used to build the model; the
+        # actual channel count img_ch is derived from the env and stored in env_dims.
+        saved_args = ckpt["args"]
+        if not isinstance(saved_args, dict):
+            raise ValueError(
+                f"Invalid checkpoint {args.resume!r}: expected 'args' to be a dict, "
+                f"got {type(saved_args).__name__}"
+            )
+        for key in ("num_envs", "num_steps", "cnn_out_dim", "hidden_dim"):
+            if saved_args.get(key) != getattr(args, key):
+                raise ValueError(
+                    f"Hyperparameter mismatch '{key}': "
+                    f"checkpoint={saved_args.get(key)!r}, current={getattr(args, key)!r}"
+                )
+        # Validate derived env dims if present (added in newer checkpoints)
+        if "env_dims" in ckpt:
+            saved_dims = ckpt["env_dims"]
+            for key, current in (("img_ch", img_ch), ("state_dim", state_dim),
+                                  ("action_dim", action_dim)):
+                if saved_dims.get(key) != current:
+                    raise ValueError(
+                        f"Env dimension mismatch '{key}': "
+                        f"checkpoint={saved_dims.get(key)!r}, current={current!r}"
+                    )
+        agent.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        global_step  = ckpt["global_step"]
+        step_offset  = global_step
+        start_update = ckpt["update"] + 1
+        # Fail fast if the requested total_timesteps is already exceeded by the checkpoint
+        if start_update > num_updates:
+            raise ValueError(
+                f"Cannot resume from {args.resume!r}: checkpoint progress "
+                f"(update={ckpt['update']}, steps={global_step:,}) already meets or "
+                f"exceeds the current target (total_timesteps={args.total_timesteps:,}, "
+                f"max_updates={num_updates}). Increase --total-timesteps."
+            )
+        print(f"Resumed from {args.resume}  "
+              f"(update={ckpt['update']}, steps={global_step:,})")
 
     obs, _  = env.reset()
     rgb     = obs["rgb"].to(device)
@@ -305,7 +366,7 @@ def train(args: Args):
     state   = obs["state"].to(device)
     done    = torch.zeros(args.num_envs, device=device)
 
-    for update in range(1, num_updates + 1):
+    for update in range(start_update, num_updates + 1):
         # Linear LR annealing
         frac = 1.0 - (update - 1) / num_updates
         optimizer.param_groups[0]["lr"] = frac * args.learning_rate
@@ -417,7 +478,7 @@ def train(args: Args):
 
         # ── Logging ──
         if update % args.log_freq == 0:
-            sps      = int(global_step / (time.time() - start_time))
+            sps      = int((global_step - step_offset) / (time.time() - start_time))
             ep_rew   = rb_reward.sum(0).mean().item()
             success  = info.get("success", torch.zeros(1))
             suc_rate = float(success.float().mean()) if hasattr(success, "float") else 0.0
@@ -439,14 +500,15 @@ def train(args: Args):
             )
             if args.use_wandb:
                 import wandb
+                _safe = lambda lst: float(np.mean(lst)) if lst else float("nan")
                 wandb.log({
                     "charts/sps":            sps,
                     "charts/ep_reward":      ep_rew,
                     "charts/success_rate":   suc_rate,
-                    "losses/policy":         np.mean(pg_losses),
-                    "losses/value":          np.mean(v_losses),
-                    "losses/entropy":        np.mean(ent_losses),
-                    "losses/approx_kl":      np.mean(approx_kls),
+                    "losses/policy":         _safe(pg_losses),
+                    "losses/value":          _safe(v_losses),
+                    "losses/entropy":        _safe(ent_losses),
+                    "losses/approx_kl":      _safe(approx_kls),
                     "charts/learning_rate":  optimizer.param_groups[0]["lr"],
                 }, step=global_step)
 
@@ -459,6 +521,8 @@ def train(args: Args):
                 "model":        agent.state_dict(),
                 "optimizer":    optimizer.state_dict(),
                 "args":         vars(args),
+                "env_dims":     {"img_ch": img_ch, "state_dim": state_dim,
+                                 "action_dim": action_dim},
             }, ckpt_path)
             print(f"  [saved] {ckpt_path}")
 
