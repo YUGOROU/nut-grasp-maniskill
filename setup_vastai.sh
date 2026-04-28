@@ -53,17 +53,26 @@ if cuda:
     print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
 PYEOF
 
-echo "=== [5/5] Smoke test ==="
+echo "=== [5/5] Smoke test (RGBD, 4 envs) ==="
 python - <<'PYEOF'
 import sys
 sys.path.insert(0, "envs")
 sys.path.insert(0, "assets/robot")
 import so101_agent, nut_grasp_env
 import gymnasium as gym
-env = gym.make("NutGrasp-v1", obs_mode="state", control_mode="pd_joint_pos",
-               num_envs=4, sim_backend="gpu")
+from mani_skill.utils.wrappers.flatten import FlattenRGBDObservationWrapper
+env = gym.make("NutGrasp-v1", obs_mode="rgbd", control_mode="pd_joint_pos",
+               reward_mode="normalized_dense",
+               num_envs=4, sim_backend="gpu",
+               sensor_configs=dict(width=64, height=64))
+env = FlattenRGBDObservationWrapper(env, rgb=True, depth=True, state=True, sep_depth=True)
 obs, _ = env.reset()
-print(f"NutGrasp-v1 OK  obs={obs.shape}")
+action = env.action_space.sample()
+import torch
+obs2, rew, term, trunc, info = env.step(torch.tensor(action))
+print(f"NutGrasp-v1 RGBD OK")
+print(f"  rgb={obs['rgb'].shape} depth={obs['depth'].shape} state={obs['state'].shape}")
+print(f"  reward={rew.mean():.4f}")
 env.close()
 PYEOF
 
@@ -74,8 +83,16 @@ echo "=============================="
 echo "  cd $WORKDIR"
 echo "  source .venv/bin/activate"
 echo "  python train_ppo_rgbd.py \\"
-echo "    --num-envs 512 \\"
+echo "    --num-envs 2048 \\"
 echo "    --sim-backend gpu \\"
-echo "    --total-timesteps 50_000_000 \\"
+echo "    --total-timesteps 50000000 \\"
+echo "    --save-freq 50 \\"
+echo "    --use-wandb"
+echo ""
+echo "  # Resume from checkpoint:"
+echo "  python train_ppo_rgbd.py \\"
+echo "    --num-envs 2048 --sim-backend gpu \\"
+echo "    --total-timesteps 50000000 \\"
+echo "    --resume checkpoints/<run_name>/ckpt_XXXXXX.pt \\"
 echo "    --use-wandb"
 echo ""

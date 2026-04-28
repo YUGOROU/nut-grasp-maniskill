@@ -75,8 +75,11 @@ class Args:
     wandb_project:     str   = "GYOZA-sim2real"
     wandb_entity:      str   = "YUGOROU"
     use_wandb:         bool  = False
-    save_freq:         int   = 100            # save every N updates
+    save_freq:         int   = 50             # save every N updates
     log_freq:          int   = 1
+
+    # Resume
+    resume:            str   = ""             # path to checkpoint .pt to resume from
 
     # Derived (set after init)
     batch_size:        int   = 0
@@ -294,10 +297,21 @@ def train(args: Args):
 
     # ── Main loop ──
     global_step      = 0
+    start_update     = 1
     start_time       = time.time()
     num_updates      = args.total_timesteps // args.batch_size
     save_dir         = os.path.join(_HERE, "checkpoints", run_name)
     os.makedirs(save_dir, exist_ok=True)
+
+    # Resume from checkpoint (restores model, optimizer, step counter)
+    if args.resume:
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        agent.load_state_dict(ckpt["model"])
+        optimizer.load_state_dict(ckpt["optimizer"])
+        global_step  = ckpt["global_step"]
+        start_update = ckpt["update"] + 1
+        print(f"Resumed from {args.resume}  "
+              f"(update={ckpt['update']}, steps={global_step:,})")
 
     obs, _  = env.reset()
     rgb     = obs["rgb"].to(device)
@@ -305,7 +319,7 @@ def train(args: Args):
     state   = obs["state"].to(device)
     done    = torch.zeros(args.num_envs, device=device)
 
-    for update in range(1, num_updates + 1):
+    for update in range(start_update, num_updates + 1):
         # Linear LR annealing
         frac = 1.0 - (update - 1) / num_updates
         optimizer.param_groups[0]["lr"] = frac * args.learning_rate
@@ -439,14 +453,15 @@ def train(args: Args):
             )
             if args.use_wandb:
                 import wandb
+                _safe = lambda lst: float(np.mean(lst)) if lst else float("nan")
                 wandb.log({
                     "charts/sps":            sps,
                     "charts/ep_reward":      ep_rew,
                     "charts/success_rate":   suc_rate,
-                    "losses/policy":         np.mean(pg_losses),
-                    "losses/value":          np.mean(v_losses),
-                    "losses/entropy":        np.mean(ent_losses),
-                    "losses/approx_kl":      np.mean(approx_kls),
+                    "losses/policy":         _safe(pg_losses),
+                    "losses/value":          _safe(v_losses),
+                    "losses/entropy":        _safe(ent_losses),
+                    "losses/approx_kl":      _safe(approx_kls),
                     "charts/learning_rate":  optimizer.param_groups[0]["lr"],
                 }, step=global_step)
 
